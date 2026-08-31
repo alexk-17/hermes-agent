@@ -99,10 +99,11 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SIDECAR_PORT = 8789
 _DEFAULT_SIDECAR_BIND = "127.0.0.1"
 
-# Photon iMessage messages from the SDK side have no documented hard
-# limit, but the underlying iMessage protocol limits practical message
-# size to ~16 KB.  Keep a conservative cap that matches BlueBubbles.
-_MAX_MESSAGE_LENGTH = 8000
+# Photon/Spectrum accepts larger payloads than every iMessage client reliably
+# renders.  Keep each bubble deliberately small and send continuations instead
+# of truncating the reply.  This also leaves room for Spectrum/iMessage
+# metadata and markdown expansion.
+_MAX_MESSAGE_LENGTH = 1800
 
 # ---------------------------------------------------------------------------
 # Sidecar runtime record
@@ -715,6 +716,9 @@ class PhotonAdapter(BasePlatformAdapter):
     """
 
     MAX_MESSAGE_LENGTH = _MAX_MESSAGE_LENGTH
+    # ``send`` delivers every chunk.  The gateway must not pre-truncate long
+    # replies to its generic single-message cap.
+    splits_long_messages = True
     # Photon (iMessage) has no real edit API for already-sent messages.
     # Mark it explicitly so streaming suppresses the visible cursor instead
     # of leaving a stale tofu square (▉) behind when edit attempts fail.
@@ -2003,7 +2007,14 @@ class PhotonAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        return await self._sidecar_send(chat_id, self.format_message(content))
+        formatted = self.format_message(content)
+        chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+        last = SendResult(success=True)
+        for chunk in chunks:
+            last = await self._sidecar_send(chat_id, chunk)
+            if not last.success:
+                return last
+        return last
 
     # -- Clarify (native iMessage poll) ------------------------------------
     #
