@@ -67,6 +67,25 @@ async def test_sidecar_send_includes_markdown_format(
 
 
 @pytest.mark.asyncio
+async def test_send_splits_long_replies_into_complete_imessage_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long replies must arrive as multiple texts, never one truncated bubble."""
+    adapter = _make_adapter(monkeypatch)
+    calls = _capture_sidecar(adapter)
+    content = "paragraph of QA evidence. " * 900
+
+    result = await adapter.send("+155****4567", content)
+
+    assert result.success is True
+    assert adapter.splits_long_messages is True
+    assert len(calls) > 1
+    assert all(len(body["text"]) <= adapter.MAX_MESSAGE_LENGTH for _, body in calls)
+    assert calls[0][1]["text"].startswith("paragraph of QA evidence.")
+    assert calls[-1][1]["text"].rstrip().endswith(")")
+
+
+@pytest.mark.asyncio
 async def test_standalone_send_includes_markdown_format(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
